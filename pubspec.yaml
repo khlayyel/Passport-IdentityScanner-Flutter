@@ -39,8 +39,16 @@ dependencies:
   html: ^0.15.0
   image_picker_for_web: ^3.0.0
   camera: ^0.11.1
+  file_picker: ^8.3.5
+  mongo_dart: ^0.10.4
+  image: ^4.0.17
+  sensors_plus: ^6.1.1
 
 
+
+
+
+  http: any
 dev_dependencies:
   flutter_test:
     sdk: flutter
