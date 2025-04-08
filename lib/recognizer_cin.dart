@@ -10,26 +10,28 @@ import 'termesdeconfidentialitees.dart';
 import 'database.dart';
 import 'package:image/image.dart' as img;
 
-
-
 class RecognizerCinScreen extends StatefulWidget {
-  final File? image;  // Garde File pour mobile
-  final Uint8List? webImage;  // Ajoute Uint8List pour web
+  final File? image;        // The merged image (Recto + Verso) for mobile
+  final Uint8List? webImage; // Merged image bytes for web
 
-  const RecognizerCinScreen({super.key, this.image, this.webImage});
+  const RecognizerCinScreen({
+    Key? key,
+    required this.image,
+    required this.webImage,
+  }) : super(key: key);
 
   @override
   State<RecognizerCinScreen> createState() => _RecognizerCinScreenState();
 }
 
 class _RecognizerCinScreenState extends State<RecognizerCinScreen> {
-  Map<String, dynamic>? cinData;
+  Map<String, dynamic>? cinData;   // Extracted data
   bool isLoading = false;
   bool termsAccepted = false;
-  String? detectedCountry;
-  Map<String, String> labels = {};
-  final String apiKey = 'ade521d63f9926e7e30af449a82e9a73';
 
+  final String apiKey = 'dabba084305fcd734ce9b3338179dd63';
+
+  // Label translations
   final Map<String, Map<String, String>> translations = {
     'FR': {
       'id_number': 'Numéro ID',
@@ -58,33 +60,39 @@ class _RecognizerCinScreenState extends State<RecognizerCinScreen> {
       'mrz2': 'MRZ Line 2',
     }
   };
+  Map<String, String> labels = {};
 
-  // Contrôleurs de texte
+  // Text controllers for fields
   final Map<String, TextEditingController> controllers = {};
 
   @override
   void initState() {
     super.initState();
-
     disableTorchWeb();
     _analyzeImage();
   }
 
-
+  // Submit the merged document image to Mindee API
   Future<String?> _submitDocument() async {
-    final url = Uri.parse('https://api.mindee.net/v1/products/mindee/international_id/v2/predict_async');
+    if (widget.image == null && widget.webImage == null) {
+      debugPrint("No image for analysis");
+      return null;
+    }
+    final url = Uri.parse(
+        'https://api.mindee.net/v1/products/mindee/international_id/v2/predict_async');
+
     try {
       var request = http.MultipartRequest('POST', url)
         ..headers['Authorization'] = 'Token $apiKey';
 
       if (kIsWeb && widget.webImage != null) {
-        // Envoie l'image sans la modifier pour le web
-        String base64Image = base64Encode(widget.webImage!);
+        final base64Image = base64Encode(widget.webImage!);
         request.fields['document'] = base64Image;
       } else if (widget.image != null && await widget.image!.exists()) {
-        request.files.add(await http.MultipartFile.fromPath('document', widget.image!.path));
+        request.files.add(
+            await http.MultipartFile.fromPath('document', widget.image!.path));
       } else {
-        debugPrint('Erreur : Aucune image valide.');
+        debugPrint("File does not exist");
         return null;
       }
 
@@ -95,22 +103,25 @@ class _RecognizerCinScreenState extends State<RecognizerCinScreen> {
         final data = jsonDecode(responseBody);
         return data['job']['id'];
       } else {
-        debugPrint('Erreur API : ${response.statusCode} - $responseBody');
+        debugPrint('API Error: ${response.statusCode} - $responseBody');
         return null;
       }
     } catch (e) {
-      debugPrint('Erreur : $e');
+      debugPrint('Error: $e');
       return null;
     }
   }
 
+  // Fetch extracted data from Mindee API
   Future<void> _fetchDocumentData(String jobId) async {
-    final url = Uri.parse('https://api.mindee.net/v1/products/mindee/international_id/v2/documents/queue/$jobId');
+    final url = Uri.parse(
+      'https://api.mindee.net/v1/products/mindee/international_id/v2/documents/queue/$jobId',
+    );
 
     try {
-      final response = await http.get(url, headers: {'Authorization': 'Token $apiKey'});
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+      final resp = await http.get(url, headers: {'Authorization': 'Token $apiKey'});
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
         final prediction = data['document']['inference']['prediction'];
 
         setState(() {
@@ -137,38 +148,33 @@ class _RecognizerCinScreenState extends State<RecognizerCinScreen> {
             controllers[key] = TextEditingController(text: value);
           });
 
-          // Populate labels for UI
-          labels = translations['FR'] ?? {}; // Set labels for French translations
+          labels = translations['FR'] ?? {};
         });
       } else {
-        debugPrint('Erreur récupération données : ${response.statusCode} - ${response.body}');
+        debugPrint('Data fetch error: ${resp.statusCode} - ${resp.body}');
       }
     } catch (e) {
-      debugPrint('Erreur : $e');
+      debugPrint("Error: $e");
     }
   }
 
-
-
+  // Analyze the merged image via API
   Future<void> _analyzeImage() async {
-    setState(() {
-      isLoading = true;
-    });
-
-    String? jobId = await _submitDocument();
+    setState(() => isLoading = true);
+    final jobId = await _submitDocument();
     if (jobId != null) {
-      await Future.delayed(Duration(seconds: 5));
+      await Future.delayed(const Duration(seconds: 5));
       await _fetchDocumentData(jobId);
     }
     setState(() => isLoading = false);
   }
 
-  // Valider les champs avant soumission
+  // Validate inputs before submitting
   bool _validateInputs() {
-    for (var controller in controllers.values) {
-      if (controller.text.isEmpty) {
+    for (var ctrl in controllers.values) {
+      if (ctrl.text.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Veuillez remplir tous les champs")),
+          const SnackBar(content: Text("Veuillez remplir tous les champs")),
         );
         return false;
       }
@@ -178,58 +184,37 @@ class _RecognizerCinScreenState extends State<RecognizerCinScreen> {
 
   void _submitData() async {
     if (!termsAccepted) {
-      if (!mounted) return; // Check if the widget is still in the tree
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text("Vous devez accepter les termes de confidentialité")),
+        const SnackBar(content: Text("Vous devez accepter les termes de confidentialité")),
       );
       return;
     }
+    if (!_validateInputs()) return;
 
-    if (!_validateInputs()) {
-      return;
-    }
-
-    setState(() {
-      isLoading = true; // Show loading indicator
+    setState(() => isLoading = true);
+    final Map<String, dynamic> finalData = {};
+    controllers.forEach((key, ctrl) {
+      finalData[key] = ctrl.text;
     });
 
-    // Récupérer les données modifiées
-    final Map<String, dynamic> submittedData = {};
-    controllers.forEach((key, controller) {
-      submittedData[key] = controller.text;
-    });
+    debugPrint("Données soumises : $finalData");
 
-    // Afficher les données soumises dans la console (pour le débogage)
-    debugPrint("Données soumises : $submittedData");
-
-    // Envoyer les données à MongoDB
     try {
       if (kIsWeb) {
-        // Si c'est le Web, utiliser le service backend avec l'API
-        await PassportService.savePassportData(submittedData);
+        await PassportService.savePassportData(finalData);
       } else {
-        // Si c'est sur mobile, utiliser MongoDB localement avec mongo_dart
-        await MongoDatabase.connect(); // Connect to MongoDB
-        await MongoDatabase.insertData(submittedData); // Insert data
+        await MongoDatabase.connect();
+        await MongoDatabase.insertData(finalData);
       }
-
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Données envoyées avec succès!")),
+        const SnackBar(content: Text("Données envoyées avec succès!")),
       );
     } catch (e) {
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Erreur lors de l'envoi des données: $e")),
       );
-    }
-    finally {
-      if (mounted) {
-        setState(() {
-          isLoading = false; // Hide loading indicator
-        });
-      }
+    } finally {
+      setState(() => isLoading = false);
     }
   }
 
@@ -237,33 +222,28 @@ class _RecognizerCinScreenState extends State<RecognizerCinScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        title: const Text('Recognizer Cin'),
         backgroundColor: Colors.black,
-        title: const Text(
-          'Recognizer Cin',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
-      backgroundColor: Colors.black, // Arrière-plan global
+      backgroundColor: Colors.black,
       body: Column(
         children: [
+          // Display the merged image (or single image) with InteractiveViewer
           SizedBox(
             height: MediaQuery.of(context).size.height / 3,
             width: double.infinity,
             child: InteractiveViewer(
               panEnabled: true,
-              boundaryMargin: const EdgeInsets.all(20),
               minScale: 1.0,
               maxScale: 5.0,
               child: Image(
                 image: kIsWeb && widget.webImage != null
                     ? MemoryImage(widget.webImage!)
                     : widget.image != null
-                    ? FileImage(widget.image!) as ImageProvider
-                    : const AssetImage('assets/placeholder.png'),
+                    ? FileImage(widget.image!)
+                    : const AssetImage('assets/placeholder.png')
+                as ImageProvider,
                 fit: BoxFit.contain,
               ),
             ),
@@ -271,38 +251,38 @@ class _RecognizerCinScreenState extends State<RecognizerCinScreen> {
           Expanded(
             child: isLoading
                 ? const Center(
-                child: CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white), // Style du loading
-                ))
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            )
                 : cinData != null
                 ? Padding(
               padding: const EdgeInsets.all(16.0),
               child: ListView(
                 children: [
-                  ...cinData!.keys.map((key) => TextField(
-                    controller: controllers[key],
-                    style: const TextStyle(color: Colors.white), // Texte saisi en blanc
-                    decoration: InputDecoration(
-                      labelText: labels[key] ?? key,
-                      labelStyle: const TextStyle(
-                          color: Colors.white70), // Titre en blanc
-                      enabledBorder: const UnderlineInputBorder(
-                          borderSide: BorderSide(color: Colors.grey)),
-                      focusedBorder: const UnderlineInputBorder(
-                          borderSide: BorderSide(color: Colors.blue)),
-                    ),
-                  )),
+                  ...cinData!.keys.map((key) {
+                    return TextField(
+                      controller: controllers[key],
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: labels[key] ?? key,
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        enabledBorder: const UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.grey)),
+                        focusedBorder: const UnderlineInputBorder(
+                            borderSide: BorderSide(color: Colors.blue)),
+                      ),
+                    );
+                  }).toList(),
                   const SizedBox(height: 16),
                   Row(
                     children: [
                       Checkbox(
                         value: termsAccepted,
-                        checkColor: Colors.black, // Couleur de la coche
-                        fillColor: MaterialStateProperty.all(Colors.white), // Fond checkbox
-                        onChanged: (bool? newValue) {
-                          setState(() {
-                            termsAccepted = newValue ?? false;
-                          });
+                        checkColor: Colors.black,
+                        fillColor: MaterialStateProperty.all(Colors.white),
+                        onChanged: (bool? val) {
+                          setState(() => termsAccepted = val ?? false);
                         },
                       ),
                       GestureDetector(
@@ -310,30 +290,17 @@ class _RecognizerCinScreenState extends State<RecognizerCinScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (context) =>
-                                    TermesDeConfidentialiteesScreen()),
+                                builder: (ctx) => TermesDeConfidentialiteesScreen()),
                           );
                         },
                         child: RichText(
-                          text: TextSpan(
+                          text: const TextSpan(
                             style: TextStyle(color: Colors.white),
                             children: [
-                              const TextSpan(text: "J'accepte les "),
+                              TextSpan(text: "J'accepte les "),
                               TextSpan(
                                 text: "termes de confidentialité",
-                                style: const TextStyle(
-                                  color: Colors.blue, // Couleur de lien classique
-                                  // Épaisseur du trait
-                                ),
-                                recognizer: TapGestureRecognizer()
-                                  ..onTap = () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => TermesDeConfidentialiteesScreen(),
-                                      ),
-                                    );
-                                  },
+                                style: TextStyle(color: Colors.blue),
                               ),
                             ],
                           ),
@@ -349,14 +316,17 @@ class _RecognizerCinScreenState extends State<RecognizerCinScreen> {
                       foregroundColor: Colors.black,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                     ),
-                    child: const Text('Confirmer et envoyer'),
+                    child: const Text("Confirmer et envoyer"),
                   ),
                 ],
               ),
             )
                 : const Center(
-                child: Text('Aucune donnée extraite',
-                    style: TextStyle(color: Colors.white))), // Texte en blanc
+              child: Text(
+                'Aucune donnée extraite',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
           ),
         ],
       ),
